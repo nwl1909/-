@@ -221,6 +221,14 @@
     try{ return localStorage.getItem(myKey(roomCode)); }catch(e){ return null; }
   }
 
+  const NAME_STORAGE_KEY = 'durak_player_name';
+  function saveMyName(name){
+    try{ localStorage.setItem(NAME_STORAGE_KEY, name); }catch(e){}
+  }
+  function loadMyName(){
+    try{ return localStorage.getItem(NAME_STORAGE_KEY) || ''; }catch(e){ return ''; }
+  }
+
   /* ============================================================
      APP STATE
   ============================================================ */
@@ -320,6 +328,7 @@
   async function createRoom(){
     if(!sbReady){ showLobbyError('Мультиплеер не настроен: откройте config.js и впишите данные вашего проекта Supabase.'); return; }
     const name = (els.nameInput.value || '').trim().slice(0,20) || 'Игрок 1';
+    saveMyName(name);
     els.createBtn.disabled = true;
     try{
       let code, insertError;
@@ -357,6 +366,7 @@
     const code = (codeArg || els.joinCodeInput.value || '').trim().toUpperCase();
     if(!code){ showLobbyError('Введите код комнаты.'); return; }
     const name = (els.nameInput.value || '').trim().slice(0,20) || 'Игрок 2';
+    saveMyName(name);
     els.joinBtn.disabled = true;
     try{
       const { data, error } = await sb.from(TABLE).select('*').eq('code', code).maybeSingle();
@@ -705,6 +715,12 @@
       els.joinCodeInput.value = els.joinCodeInput.value.toUpperCase();
     });
 
+    // Remember the player's name as they type, so it's already filled in
+    // next time they open the page — no need to retype it every visit.
+    els.nameInput.addEventListener('input', ()=>{
+      saveMyName(els.nameInput.value.slice(0,20));
+    });
+
     els.copyCodeBtn.addEventListener('click', ()=>{
       if(!currentRoomCode) return;
       navigator.clipboard && navigator.clipboard.writeText(currentRoomCode).then(()=> toast('Код скопирован!'));
@@ -761,6 +777,11 @@
       setConn('gone'); // will flip to live once actually subscribed to a room
     }
     showScreen('lobby');
+
+    // pre-fill the name field from last time, so returning players
+    // don't have to retype their name on every visit
+    const savedName = loadMyName();
+    if(savedName) els.nameInput.value = savedName;
 
     if(sbReady) runPreflightCheck();
 
