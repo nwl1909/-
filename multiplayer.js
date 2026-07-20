@@ -18,193 +18,16 @@
   const TABLE = 'durak_games';
 
   /* ============================================================
-     CARD / RULES ENGINE (pure functions, mirrors single-player logic
-     so both players' browsers always compute identical results)
+     RULES ENGINE — loaded from engine.js as a browser global (window.DurakEngine)
   ============================================================ */
-  const SUITS = ["♠","♥","♦","♣"];
-  const SUIT_COLOR = { "♠":"black", "♣":"black", "♥":"red", "♦":"red" };
-  const RANKS = ["6","7","8","9","10","J","Q","K","A"];
-  const RANK_VALUE = {}; RANKS.forEach((r,i)=> RANK_VALUE[r] = i+6);
-
-  function makeDeck(){
-    const deck = [];
-    for(const s of SUITS){
-      for(const r of RANKS){
-        deck.push({ suit:s, rank:r, value:RANK_VALUE[r], id: s+r });
-      }
-    }
-    return deck;
-  }
-  function shuffle(arr){
-    for(let i=arr.length-1;i>0;i--){
-      const j = Math.floor(Math.random()*(i+1));
-      [arr[i],arr[j]] = [arr[j],arr[i]];
-    }
-    return arr;
-  }
-  function canBeat(attackCard, defendCard, trumpSuit){
-    if(defendCard.suit === attackCard.suit) return defendCard.value > attackCard.value;
-    if(defendCard.suit === trumpSuit && attackCard.suit !== trumpSuit) return true;
-    return false;
-  }
-  function other(who){ return who==='p1' ? 'p2' : 'p1'; }
-
-  function tableRanksInPlay(state){
-    const ranks = new Set();
-    state.table.forEach(pair=>{
-      ranks.add(pair.attack.rank);
-      if(pair.defend) ranks.add(pair.defend.rank);
-    });
-    return ranks;
-  }
-  function unresolvedCount(state){ return state.table.filter(p=>!p.defend).length; }
-  function countDefended(state){ return state.table.filter(p=>p.defend).length; }
-
-  function createInitialState(p1Name, p2Name){
-    const deck = shuffle(makeDeck());
-    const p1Hand = deck.splice(0,6);
-    const p2Hand = deck.splice(0,6);
-    const trumpCard = deck[deck.length-1];
-    const trumpSuit = trumpCard.suit;
-
-    const p1Trumps = p1Hand.filter(c=>c.suit===trumpSuit);
-    const p2Trumps = p2Hand.filter(c=>c.suit===trumpSuit);
-    let firstAttacker = 'p1';
-    if(p1Trumps.length && p2Trumps.length){
-      const p1Min = Math.min(...p1Trumps.map(c=>c.value));
-      const p2Min = Math.min(...p2Trumps.map(c=>c.value));
-      firstAttacker = p1Min <= p2Min ? 'p1' : 'p2';
-    } else if(p2Trumps.length && !p1Trumps.length){
-      firstAttacker = 'p2';
-    } else if(p1Trumps.length && !p2Trumps.length){
-      firstAttacker = 'p1';
-    } else {
-      firstAttacker = Math.random() < 0.5 ? 'p1' : 'p2';
-    }
-
-    return {
-      deck, trumpCard, trumpSuit,
-      hands: { p1: p1Hand, p2: p2Hand },
-      table: [],
-      discard: [],
-      attacker: firstAttacker,
-      defender: other(firstAttacker),
-      players: { p1: { name: p1Name || 'Игрок 1' }, p2: { name: p2Name || 'Игрок 2' } },
-      status: 'playing',
-      winner: null,
-      lastAction: null,
-      version: 1
-    };
-  }
-
-  function drawUpTo6(state, order){
-    for(const who of order){
-      const hand = state.hands[who];
-      while(hand.length < 6 && state.deck.length > 0){
-        hand.push(state.deck.shift());
-      }
-    }
-  }
-
-  function checkGameOver(state){
-    if(state.deck.length > 0) return false;
-    const p1Empty = state.hands.p1.length === 0;
-    const p2Empty = state.hands.p2.length === 0;
-    if(p1Empty && p2Empty){ state.status='finished'; state.winner='draw'; return true; }
-    if(p1Empty){ state.status='finished'; state.winner='p1'; return true; }
-    if(p2Empty){ state.status='finished'; state.winner='p2'; return true; }
-    return false;
-  }
-
-  function takeCardsFromTable(state, who){
-    const hand = state.hands[who];
-    state.table.forEach(pair=>{
-      hand.push(pair.attack);
-      if(pair.defend) hand.push(pair.defend);
-    });
-    state.table = [];
-  }
-  function discardTable(state){
-    state.table.forEach(pair=>{
-      state.discard.push(pair.attack);
-      if(pair.defend) state.discard.push(pair.defend);
-    });
-    state.table = [];
-  }
-
-  function afterRoundResolved(state, nextAttacker){
-    const drawOrder = state.attacker === 'p1' ? ['p1','p2'] : ['p2','p1'];
-    drawUpTo6(state, drawOrder);
-    if(checkGameOver(state)) return;
-    state.attacker = nextAttacker;
-    state.defender = other(nextAttacker);
-  }
-
-  // ---- Actions. Each takes the full state + acting player id ('p1'/'p2')
-  // and either mutates+returns state, or throws a user-facing message.
-
-  function actionPlayAttack(state, who, cardId){
-    if(state.status !== 'playing') throw 'Игра ещё не началась.';
-    if(state.attacker !== who) throw 'Сейчас не ваш ход атаки.';
-    const hand = state.hands[who];
-    const card = hand.find(c=>c.id===cardId);
-    if(!card) throw 'Этой карты нет у вас на руках.';
-
-    const ranks = tableRanksInPlay(state);
-    const isFirstMove = state.table.length === 0;
-    if(!isFirstMove && !ranks.has(card.rank)) throw 'Можно подкинуть только карту того же достоинства.';
-    if(unresolvedCount(state) > 0) throw 'Соперник ещё не отбился.';
-
-    const defenderHand = state.hands[other(who)];
-    if(state.table.length >= defenderHand.length + countDefended(state)) throw 'Больше нельзя подкидывать — не хватит карт у соперника.';
-
-    state.hands[who] = hand.filter(c=>c.id!==cardId);
-    state.table.push({attack:card, defend:null});
-    state.lastAction = { type:'attack', by: who };
-    return state;
-  }
-
-  function actionPlayDefend(state, who, cardId){
-    if(state.status !== 'playing') throw 'Игра ещё не началась.';
-    if(state.defender !== who) throw 'Сейчас не ваш ход защиты.';
-    const pair = state.table.find(p=>!p.defend);
-    if(!pair) throw 'Нечего отбивать.';
-    const hand = state.hands[who];
-    const card = hand.find(c=>c.id===cardId);
-    if(!card) throw 'Этой карты нет у вас на руках.';
-    if(!canBeat(pair.attack, card, state.trumpSuit)) throw 'Этой картой нельзя побить.';
-
-    state.hands[who] = hand.filter(c=>c.id!==cardId);
-    pair.defend = card;
-    state.lastAction = { type:'defend', by: who };
-    return state;
-  }
-
-  function actionTake(state, who){
-    if(state.status !== 'playing') throw 'Игра ещё не началась.';
-    if(state.defender !== who) throw 'Сейчас не ваша очередь брать карты.';
-    if(state.table.length === 0) throw 'На столе нет карт.';
-    const nextAttacker = state.attacker;
-    takeCardsFromTable(state, who);
-    afterRoundResolved(state, nextAttacker);
-    state.lastAction = { type:'take', by: who };
-    return state;
-  }
-
-  function actionDone(state, who){
-    if(state.status !== 'playing') throw 'Игра ещё не началась.';
-    if(state.attacker !== who) throw 'Сейчас не ваш ход атаки.';
-    if(state.table.length === 0) throw 'Сначала нужно сходить.';
-    if(unresolvedCount(state) > 0) throw 'Соперник ещё не отбился.';
-    const nextAttacker = state.defender;
-    discardTable(state);
-    afterRoundResolved(state, nextAttacker);
-    state.lastAction = { type:'done', by: who };
-    return state;
-  }
+  const Engine = window.DurakEngine;
+  const { SUIT_COLOR, canBeat, nextSeat, isActiveSeat, activeSeats,
+    createInitialState, unresolvedCount, countDefended, tableRanksInPlay,
+    eligibleThrowInSeats, throwInCapacity,
+    actionPlayAttack, actionPlayDefend, actionTake, actionPass } = Engine;
 
   /* ============================================================
-     ROOM / IDENTITY MANAGEMENT
+     ROOM / IDENTITY HELPERS
   ============================================================ */
   function genRoomCode(){
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
@@ -212,12 +35,15 @@
     for(let i=0;i<6;i++) code += chars[Math.floor(Math.random()*chars.length)];
     return code;
   }
-
-  function myKey(roomCode){ return 'durak_role_' + roomCode; }
-  function saveMyRole(roomCode, role){
-    try{ localStorage.setItem(myKey(roomCode), role); }catch(e){}
+  function genSeatId(){
+    return 'p' + Math.random().toString(36).slice(2,10);
   }
-  function getMyRole(roomCode){
+
+  function myKey(roomCode){ return 'durak_seat_' + roomCode; }
+  function saveMySeat(roomCode, seatId){
+    try{ localStorage.setItem(myKey(roomCode), seatId); }catch(e){}
+  }
+  function getMySeat(roomCode){
     try{ return localStorage.getItem(myKey(roomCode)); }catch(e){ return null; }
   }
 
@@ -233,22 +59,22 @@
      APP STATE
   ============================================================ */
   let currentRoomCode = null;
-  let myRole = null; // 'p1' | 'p2'
-  let gameState = null;
+  let mySeatId = null;
+  let gameState = null; // the full DB row's `state` JSON
   let channel = null;
   let pollTimer = null;
   let prevTableIds = new Set();
   let prevHandIds = new Set();
-  let prevOppHandCount = 0;
+  let prevOppHandCounts = {}; // seatId -> last known hand length, for deal-in animation
   let lastSeenVersion = 0;
 
   const els = {};
   function cacheEls(){
-    ['lobbyScreen','waitingScreen','gameScreen','lobbyError','nameInput','createBtn',
-     'joinCodeInput','joinBtn','roomCodeDisplay','copyCodeBtn','copyLinkBtn',
-     'statusText','trumpChip','opponentLabel','opponentRow','opponentFan',
+    ['lobbyScreen','waitingScreen','gameScreen','lobbyError','nameInput','maxPlayersSelect','createBtn',
+     'joinCodeInput','joinBtn','roomCodeDisplay','copyCodeBtn','copyLinkBtn','seatList','startGameBtn','waitingHostHint',
+     'statusText','trumpChip','opponentsStrip',
      'trumpUnderCard','deckPile','deckCount','battlefield','discardPile',
-     'youLabel','playerHand','takeBtn','doneBtn','endModal','endIcon','endTitle',
+     'youLabel','playerHand','takeBtn','passBtn','doneBtn','endModal','endIcon','endTitle',
      'endText','playAgainBtn','backToLobbyBtn','rulesBtn','rulesModal','closeRulesBtn',
      'rulesLink2','leaveBtn','connDot','connLabel'
     ].forEach(id => els[id] = document.getElementById(id));
@@ -271,23 +97,17 @@
   }
   function setStatus(msg){ els.statusText.textContent = msg; }
   function setConn(state){
-    // state: 'live' | 'gone' | 'connecting'
     els.connDot.className = 'conn-dot' + (state==='live' ? ' live' : state==='gone' ? ' gone' : '');
     els.connLabel.textContent = state==='live' ? 'онлайн' : state==='gone' ? 'нет связи' : 'подключение…';
   }
 
   /* ============================================================
-     LOBBY ACTIONS
+     ERROR REPORTING HELPERS
   ============================================================ */
   function showLobbyError(msg){
     if(!msg){ els.lobbyError.innerHTML=''; return; }
     els.lobbyError.innerHTML = `<div class="error-banner">${msg}</div>`;
   }
-
-  // Pulls a real, human-readable detail out of a Supabase/PostgREST error
-  // (or any thrown JS error) so the on-screen message says *what actually
-  // went wrong* instead of a generic guess. Shown in small text under the
-  // main message so it stays copy-pasteable for support requests.
   function describeError(e){
     if(!e) return '';
     const parts = [];
@@ -316,7 +136,6 @@
     }
     return '';
   }
-
   function showLobbyErrorWithDetail(mainMsg, e){
     const hint = friendlyHintForError(e);
     const detail = describeError(e);
@@ -325,31 +144,41 @@
     els.lobbyError.innerHTML = `<div class="error-banner">${mainMsg}${hintHtml}${detailHtml}</div>`;
   }
 
+  /* ============================================================
+     LOBBY (PRE-GAME ROOM) ACTIONS
+  ============================================================ */
+  function makeLobbyState(hostSeatId, hostName, maxPlayers){
+    return {
+      phase: 'lobby',
+      maxPlayers,
+      hostSeatId,
+      seatOrder: [hostSeatId],
+      players: { [hostSeatId]: { name: hostName } },
+      version: 1
+    };
+  }
+
   async function createRoom(){
     if(!sbReady){ showLobbyError('Мультиплеер не настроен: откройте config.js и впишите данные вашего проекта Supabase.'); return; }
     const name = (els.nameInput.value || '').trim().slice(0,20) || 'Игрок 1';
     saveMyName(name);
+    const maxPlayers = parseInt(els.maxPlayersSelect.value, 10) || 4;
     els.createBtn.disabled = true;
     try{
       let code, insertError;
-      // Room codes are short, so on the off chance of a collision with an
-      // existing room, retry a couple of times with a fresh code.
+      const hostSeatId = genSeatId();
       for(let attempt=0; attempt<3; attempt++){
         code = genRoomCode();
-        const state = createInitialState(name, null);
-        state.status = 'waiting'; // waiting for second player before dealing is "official"
-        // We still deal cards immediately so the moment player 2 joins the game can start instantly;
-        // status flips to 'playing' once p2 has joined and set their name.
+        const state = makeLobbyState(hostSeatId, name, maxPlayers);
         const { error } = await sb.from(TABLE).insert({ code, state });
         insertError = error;
         if(!error) break;
-        // 23505 = unique_violation in Postgres; anything else, stop retrying immediately
-        if(error.code !== '23505') break;
+        if(error.code !== '23505') break; // only retry on room-code collision
       }
       if(insertError) throw insertError;
       currentRoomCode = code;
-      myRole = 'p1';
-      saveMyRole(code, 'p1');
+      mySeatId = hostSeatId;
+      saveMySeat(code, hostSeatId);
       els.roomCodeDisplay.textContent = code;
       showScreen('waiting');
       subscribeToRoom(code);
@@ -365,7 +194,7 @@
     if(!sbReady){ showLobbyError('Мультиплеер не настроен: откройте config.js и впишите данные вашего проекта Supabase.'); return; }
     const code = (codeArg || els.joinCodeInput.value || '').trim().toUpperCase();
     if(!code){ showLobbyError('Введите код комнаты.'); return; }
-    const name = (els.nameInput.value || '').trim().slice(0,20) || 'Игрок 2';
+    const name = (els.nameInput.value || '').trim().slice(0,20) || 'Игрок';
     saveMyName(name);
     els.joinBtn.disabled = true;
     try{
@@ -373,31 +202,36 @@
       if(error) throw error;
       if(!data){ showLobbyError('Комната с таким кодом не найдена.'); els.joinBtn.disabled=false; return; }
 
-      const existingRole = getMyRole(code);
-      if(existingRole){
-        // rejoining a room we were already part of
+      const existingSeat = getMySeat(code);
+      if(existingSeat && data.state.seatOrder && data.state.seatOrder.includes(existingSeat)){
         currentRoomCode = code;
-        myRole = existingRole;
+        mySeatId = existingSeat;
         subscribeToRoom(code);
         return;
       }
 
       const state = data.state;
-      if(state.status === 'playing' && state.players.p2 && state.players.p2.joined){
-        showLobbyError('В этой комнате уже два игрока.');
+      if(state.phase !== 'lobby'){
+        showLobbyError('Игра в этой комнате уже началась.');
+        els.joinBtn.disabled = false;
+        return;
+      }
+      if(state.seatOrder.length >= state.maxPlayers){
+        showLobbyError('Комната уже заполнена.');
         els.joinBtn.disabled = false;
         return;
       }
 
-      state.players.p2 = { name, joined: true };
-      state.status = 'playing';
+      const seatId = genSeatId();
+      state.seatOrder.push(seatId);
+      state.players[seatId] = { name };
       state.version = (state.version||1) + 1;
       const { error: updErr } = await sb.from(TABLE).update({ state }).eq('code', code);
       if(updErr) throw updErr;
 
       currentRoomCode = code;
-      myRole = 'p2';
-      saveMyRole(code, 'p2');
+      mySeatId = seatId;
+      saveMySeat(code, seatId);
       subscribeToRoom(code);
     }catch(e){
       console.error(e);
@@ -407,15 +241,37 @@
     }
   }
 
+  async function startGame(){
+    if(!gameState || gameState.phase !== 'lobby') return;
+    if(gameState.hostSeatId !== mySeatId){ toast('Только хост может начать игру.'); return; }
+    if(gameState.seatOrder.length < 2){ toast('Нужно минимум 2 игрока.'); return; }
+    els.startGameBtn.disabled = true;
+    try{
+      const players = gameState.seatOrder.map(seatId=>({ seatId, name: gameState.players[seatId].name }));
+      const fresh = createInitialState(players);
+      fresh.phase = 'playing';
+      fresh.maxPlayers = gameState.maxPlayers;
+      fresh.hostSeatId = gameState.hostSeatId;
+      fresh.version = (gameState.version||1) + 1;
+      const { error } = await sb.from(TABLE).update({ state: fresh }).eq('code', currentRoomCode);
+      if(error) throw error;
+    }catch(e){
+      console.error(e);
+      toast('Не удалось начать игру: ' + describeError(e));
+    }finally{
+      els.startGameBtn.disabled = false;
+    }
+  }
+
   function leaveRoom(){
     if(channel){ sb.removeChannel(channel); channel = null; }
     if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
     currentRoomCode = null;
-    myRole = null;
+    mySeatId = null;
     gameState = null;
     prevTableIds = new Set();
     prevHandIds = new Set();
-    prevOppHandCount = 0;
+    prevOppHandCounts = {};
     els.endModal.classList.remove('open');
     showLobbyError('');
     showScreen('lobby');
@@ -426,7 +282,6 @@
   ============================================================ */
   function subscribeToRoom(code){
     setConn('connecting');
-    // Initial fetch
     fetchRoomState(code, true);
 
     if(channel){ sb.removeChannel(channel); }
@@ -441,8 +296,6 @@
         else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){ setConn('gone'); }
       });
 
-    // Backup polling in case realtime silently drops (known long-session issue);
-    // cheap, infrequent, just keeps things eventually-consistent.
     if(pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(()=> fetchRoomState(code, false), 4000);
   }
@@ -469,7 +322,8 @@
     lastSeenVersion = state.version || lastSeenVersion;
     gameState = state;
 
-    if(state.status === 'waiting'){
+    if(state.phase === 'lobby'){
+      renderWaitingRoom();
       showScreen('waiting');
       return;
     }
@@ -477,13 +331,12 @@
     showScreen('game');
     renderGame();
 
-    if(state.status === 'finished'){
+    if(state.phase === 'finished'){
       showEndModal(state.winner);
     }
   }
 
-  // Reads current DB row, applies `mutator(state, myRole)`, writes it back.
-  // Retries once on version conflict (someone else wrote in between).
+  // Reads current DB row, applies `mutator(state, mySeatId)`, writes it back.
   async function performAction(mutator){
     if(!sb || !currentRoomCode) return;
     for(let attempt=0; attempt<2; attempt++){
@@ -493,7 +346,7 @@
         if(!data){ toast('Комната больше не существует.'); return; }
         const state = data.state;
         try{
-          mutator(state, myRole);
+          mutator(state, mySeatId);
         }catch(userMsg){
           if(typeof userMsg === 'string'){ toast(userMsg); return; }
           throw userMsg;
@@ -511,7 +364,51 @@
   }
 
   /* ============================================================
-     RENDERING (mirrors single-player renderer, adapted for p1/p2)
+     WAITING ROOM RENDERING
+  ============================================================ */
+  function renderWaitingRoom(){
+    const state = gameState;
+    els.roomCodeDisplay.textContent = currentRoomCode || '------';
+
+    const rows = [];
+    for(let i=0; i<state.maxPlayers; i++){
+      const seatId = state.seatOrder[i];
+      if(seatId){
+        const p = state.players[seatId];
+        const isHost = seatId === state.hostSeatId;
+        const isMe = seatId === mySeatId;
+        rows.push(`<div class="seat-row">
+          <span class="seat-name">${escapeHtml(p.name)} ${isMe ? '<span class="you-tag">(вы)</span>' : ''}</span>
+          ${isHost ? '<span class="host-tag">Хост</span>' : ''}
+        </div>`);
+      } else {
+        rows.push(`<div class="seat-row empty">Ждём игрока…</div>`);
+      }
+    }
+    els.seatList.innerHTML = rows.join('');
+
+    const amHost = state.hostSeatId === mySeatId;
+    const enoughPlayers = state.seatOrder.length >= 2;
+    if(amHost){
+      els.startGameBtn.style.display = 'block';
+      els.startGameBtn.disabled = !enoughPlayers;
+      els.waitingHostHint.textContent = enoughPlayers
+        ? 'Можно начинать, как только будете готовы — необязательно дожидаться всех мест.'
+        : 'Нужно как минимум 2 игрока, чтобы начать.';
+    } else {
+      els.startGameBtn.style.display = 'none';
+      els.waitingHostHint.textContent = 'Ждём, пока хост комнаты начнёт игру…';
+    }
+  }
+
+  function escapeHtml(s){
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  /* ============================================================
+     GAME RENDERING
   ============================================================ */
   function cardHTML(card, extraClass, clickable){
     const color = SUIT_COLOR[card.suit];
@@ -529,37 +426,61 @@
   function renderGame(){
     if(!gameState) return;
     const state = gameState;
-    const me = myRole;
-    const opp = other(me);
+    const me = mySeatId;
+    const opponents = state.seatOrder.filter(s=>s!==me);
 
     els.youLabel.textContent = (state.players[me] && state.players[me].name) || 'Вы';
-    els.opponentLabel.textContent = (state.players[opp] && state.players[opp].name) || 'Соперник';
 
-    // status text
-    if(state.attacker === me && unresolvedCount(state) === 0){
-      setStatus(state.table.length===0 ? 'Ваш ход — атакуйте.' : 'Подкиньте карту или нажмите «Бито».');
+    const amEliminated = state.eliminated && state.eliminated.includes(me);
+    if(state.phase === 'finished'){
+      setStatus('Игра окончена.');
+    } else if(amEliminated){
+      setStatus('Вы выбыли — у вас закончились карты. Наблюдайте за игрой.');
+    } else if(state.attacker === me && unresolvedCount(state) === 0){
+      setStatus(state.table.length===0 ? 'Ваш ход — атакуйте.' : 'Подкиньте карту или нажмите «Бито», когда закончите.');
     } else if(state.defender === me && unresolvedCount(state) > 0){
       setStatus('Отбейтесь или возьмите карты.');
-    } else if(state.attacker === me && unresolvedCount(state) > 0){
-      setStatus('Соперник защищается…');
     } else if(state.defender === me && unresolvedCount(state) === 0 && state.table.length>0){
-      setStatus('Вы отбились. Соперник решает, подкинуть ли ещё…');
+      setStatus('Вы отбились. Остальные решают, подкинуть ли ещё…');
+    } else if(state.table.length>0 && eligibleThrowInSeats(state).includes(me)){
+      setStatus('Можете подкинуть карту того же достоинства, либо нажмите «Пас».');
     } else {
-      setStatus('Ход соперника…');
+      const attackerName = (state.players[state.attacker]||{}).name || '?';
+      const defenderName = (state.players[state.defender]||{}).name || '?';
+      setStatus(`Ходят: ${attackerName} → ${defenderName}`);
     }
 
-    // trump chip
     const tc = state.trumpCard;
     els.trumpChip.innerHTML = `Козырь: <span class="mini-card ${SUIT_COLOR[tc.suit]}">${tc.rank}${tc.suit}</span>`;
 
-    // opponent fan
-    const oppHand = state.hands[opp];
-    const oppGrew = oppHand.length > prevOppHandCount;
-    els.opponentFan.innerHTML = oppHand.map((c,i)=>{
-      const isNew = oppGrew && i >= prevOppHandCount;
-      return `<div class="card-back${isNew?' deal-in':''}"></div>`;
+    // opponents strip
+    els.opponentsStrip.innerHTML = opponents.map(seatId=>{
+      const p = state.players[seatId] || { name: '?' };
+      const hand = state.hands[seatId] || [];
+      const isElim = state.eliminated && state.eliminated.includes(seatId);
+      const isAttacker = state.attacker === seatId;
+      const isDefender = state.defender === seatId;
+      const prevCount = prevOppHandCounts[seatId] || 0;
+      const grew = hand.length > prevCount;
+
+      const cls = ['opponent-pod'];
+      if(isElim) cls.push('eliminated');
+      if(isAttacker) cls.push('is-attacker');
+      if(isDefender) cls.push('is-defender');
+
+      const badge = isAttacker ? '<span class="role-badge">атака</span>' : isDefender ? '<span class="role-badge defend">защита</span>' : '';
+      const fanHtml = hand.map((c,i)=>{
+        const isNew = grew && i >= prevCount;
+        return `<div class="card-back${isNew?' deal-in':''}"></div>`;
+      }).join('');
+
+      return `<div class="${cls.join(' ')}" data-seat="${seatId}">
+        <div class="pod-name">${escapeHtml(p.name)} ${badge}</div>
+        <div class="pod-fan">${isElim ? '' : fanHtml}</div>
+        <div class="pod-count">${isElim ? 'выбыл' : hand.length + ' карт'}</div>
+      </div>`;
     }).join('');
-    prevOppHandCount = oppHand.length;
+    opponents.forEach(seatId=>{ prevOppHandCounts[seatId] = (state.hands[seatId]||[]).length; });
 
     // deck / trump card
     const remaining = state.deck.length;
@@ -605,7 +526,7 @@
     els.discardPile.textContent = state.discard.length>0 ? `бито\n${state.discard.length}` : 'бито';
 
     // my hand
-    const myHand = state.hands[me].slice().sort((a,b)=>{
+    const myHand = amEliminated ? [] : (state.hands[me]||[]).slice().sort((a,b)=>{
       if(a.suit!==b.suit){
         const aT = a.suit===state.trumpSuit?1:0;
         const bT = b.suit===state.trumpSuit?1:0;
@@ -617,20 +538,25 @@
 
     const isMeDefending = state.defender===me && unresolvedCount(state)>0;
     const isMeAttacking = state.attacker===me;
+    const isFirstMove = state.table.length===0;
+    // Throwing in is only a thing once the round has been opened by the
+    // attacker's first card — before that, only the attacker can act at all.
+    const canThrowInNow = !isFirstMove && !isMeDefending && me!==state.defender && unresolvedCount(state)===0
+      && eligibleThrowInSeats(state).includes(me) && !amEliminated;
     const pendingPair = isMeDefending ? state.table.find(p=>!p.defend) : null;
 
     els.playerHand.innerHTML = myHand.map(card=>{
       let disabled = false;
-      if(state.status !== 'playing') disabled = true;
-      else if(isMeAttacking){
-        const ranks = tableRanksInPlay(state);
-        const isFirstMove = state.table.length===0;
-        if(!isFirstMove && !ranks.has(card.rank)) disabled = true;
-        if(unresolvedCount(state)>0) disabled = true;
-        const oppLen = state.hands[opp].length;
-        if(state.table.length >= oppLen + countDefended(state)) disabled = true;
-      } else if(isMeDefending && pendingPair){
+      if(state.phase !== 'playing') disabled = true;
+      else if(isMeDefending && pendingPair){
         if(!canBeat(pendingPair.attack, card, state.trumpSuit)) disabled = true;
+      } else if(isMeAttacking && isFirstMove && unresolvedCount(state)===0 && state.defender!==me){
+        // opening the round — any card allowed, disabled stays false
+      } else if(canThrowInNow){
+        const ranks = tableRanksInPlay(state);
+        if(!ranks.has(card.rank)) disabled = true;
+        const capacity = throwInCapacity(state);
+        if(state.table.length >= capacity) disabled = true;
       } else {
         disabled = true;
       }
@@ -649,36 +575,45 @@
       });
     });
 
-    const canTake = state.defender===me && state.table.length>0 && unresolvedCount(state)>0 && state.status==='playing';
+    // action buttons
+    const canTake = state.defender===me && state.table.length>0 && unresolvedCount(state)>0 && state.phase==='playing';
     els.takeBtn.disabled = !canTake;
-    const canDone = state.attacker===me && state.table.length>0 && unresolvedCount(state)===0 && state.status==='playing';
+
+    const canPass = canThrowInNow;
+    els.passBtn.disabled = !canPass;
+    // "Бито" lets the attacker force-close the round once the defender has
+    // cleared all current cards, without waiting for everyone else to pass.
+    const canDone = isMeAttacking && state.table.length>0 && unresolvedCount(state)===0
+      && eligibleThrowInSeats(state).includes(me) && state.phase==='playing';
     els.doneBtn.disabled = !canDone;
   }
 
   function onMyCardClick(cardId){
     if(!gameState) return;
     const state = gameState;
-    if(state.attacker === myRole){
-      performAction((s, who)=> actionPlayAttack(s, who, cardId));
-    } else if(state.defender === myRole){
-      performAction((s, who)=> actionPlayDefend(s, who, cardId));
+    if(state.defender === mySeatId && unresolvedCount(state) > 0){
+      performAction((s, seatId)=> actionPlayDefend(s, seatId, cardId));
+    } else {
+      performAction((s, seatId)=> actionPlayAttack(s, seatId, cardId));
     }
   }
 
   function showEndModal(winner){
     const modal = els.endModal;
+    const state = gameState;
     if(winner === 'draw'){
       els.endIcon.textContent = '♦';
       els.endTitle.textContent = 'Ничья!';
-      els.endText.textContent = 'Обе руки опустели одновременно. Никто не остался в дураках.';
-    } else if(winner === myRole){
+      els.endText.textContent = 'Все руки опустели одновременно. Никто не остался в дураках.';
+    } else if(winner === mySeatId){
       els.endIcon.textContent = '♠';
       els.endTitle.textContent = 'Победа!';
       els.endText.textContent = 'Вы избавились от всех карт первым.';
     } else {
+      const name = (state.players[winner]||{}).name || 'Другой игрок';
       els.endIcon.textContent = '♣';
-      els.endTitle.textContent = 'Вы проиграли';
-      els.endText.textContent = 'На этот раз в дураках остались вы.';
+      els.endTitle.textContent = 'Игра окончена';
+      els.endText.textContent = `Победил${winner ? ' ' + name : ''}. Кто-то остался в дураках — проверьте, не вы ли.`;
     }
     modal.classList.add('open');
   }
@@ -687,20 +622,24 @@
     if(!currentRoomCode || !gameState) return;
     els.endModal.classList.remove('open');
     try{
-      const p1Name = gameState.players.p1.name;
-      const p2Name = gameState.players.p2.name;
-      const fresh = createInitialState(p1Name, p2Name);
-      fresh.players.p1.joined = true;
-      fresh.players.p2.joined = true;
-      const { data } = await sb.from(TABLE).select('state').eq('code', currentRoomCode).maybeSingle();
-      fresh.version = ((data && data.state && data.state.version) || 1) + 1;
+      // Go back to the lobby phase with the same seats, so everyone can
+      // start a fresh game (or someone can leave first).
+      const state = gameState;
+      const lobbyState = {
+        phase: 'lobby',
+        maxPlayers: state.maxPlayers,
+        hostSeatId: state.hostSeatId,
+        seatOrder: state.seatOrder.slice(),
+        players: JSON.parse(JSON.stringify(state.players)),
+        version: (state.version||1) + 1
+      };
       prevTableIds = new Set();
       prevHandIds = new Set();
-      prevOppHandCount = 0;
-      await sb.from(TABLE).update({ state: fresh }).eq('code', currentRoomCode);
+      prevOppHandCounts = {};
+      await sb.from(TABLE).update({ state: lobbyState }).eq('code', currentRoomCode);
     }catch(e){
       console.error(e);
-      toast('Не удалось начать новую игру.');
+      toast('Не удалось вернуться в лобби.');
     }
   }
 
@@ -715,8 +654,6 @@
       els.joinCodeInput.value = els.joinCodeInput.value.toUpperCase();
     });
 
-    // Remember the player's name as they type, so it's already filled in
-    // next time they open the page — no need to retype it every visit.
     els.nameInput.addEventListener('input', ()=>{
       saveMyName(els.nameInput.value.slice(0,20));
     });
@@ -731,8 +668,11 @@
       navigator.clipboard && navigator.clipboard.writeText(url).then(()=> toast('Ссылка скопирована!'));
     });
 
-    els.takeBtn.addEventListener('click', ()=> performAction((s,who)=> actionTake(s,who)));
-    els.doneBtn.addEventListener('click', ()=> performAction((s,who)=> actionDone(s,who)));
+    els.startGameBtn.addEventListener('click', startGame);
+
+    els.takeBtn.addEventListener('click', ()=> performAction((s,seatId)=> actionTake(s,seatId)));
+    els.passBtn.addEventListener('click', ()=> performAction((s,seatId)=> actionPass(s,seatId)));
+    els.doneBtn.addEventListener('click', ()=> performAction((s,seatId)=> actionPass(s,seatId)));
 
     els.leaveBtn.addEventListener('click', leaveRoom);
     els.playAgainBtn.addEventListener('click', playAgain);
@@ -750,16 +690,10 @@
      INIT
   ============================================================ */
   async function runPreflightCheck(){
-    // Runs once when the lobby loads: makes a harmless read against the
-    // games table so config/table/RLS problems are visible immediately,
-    // with the real database error message, instead of only surfacing
-    // once someone tries to create or join a room.
     if(!sbReady) return;
     try{
       const { error } = await sb.from(TABLE).select('code').limit(1);
       if(error) throw error;
-      // looks healthy — clear any stale error and leave the connection dot
-      // as "gone" until an actual room subscription goes live.
     }catch(e){
       console.error('Supabase preflight check failed:', e);
       showLobbyErrorWithDetail(friendlyHintForError(e) || 'Не удалось подключиться к базе данных.', e);
@@ -774,18 +708,15 @@
       setConn('gone');
       showLobbyError('Мультиплеер не настроен. Откройте <code>config.js</code> и впишите URL и ключ вашего проекта Supabase (см. README).');
     } else {
-      setConn('gone'); // will flip to live once actually subscribed to a room
+      setConn('gone');
     }
     showScreen('lobby');
 
-    // pre-fill the name field from last time, so returning players
-    // don't have to retype their name on every visit
     const savedName = loadMyName();
     if(savedName) els.nameInput.value = savedName;
 
     if(sbReady) runPreflightCheck();
 
-    // auto-fill join code from ?room= link
     const params = new URLSearchParams(location.search);
     const roomParam = params.get('room');
     if(roomParam){
