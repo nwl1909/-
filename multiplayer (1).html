@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Дурак Online — играть с другом</title>
+<meta name="description" content="Классический русский Дурак онлайн вдвоём с другом. Создайте комнату и отправьте код.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,900;1,600&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --felt-1:#1b3a2f;
+    --felt-2:#0f241c;
+    --felt-edge:#0a1712;
+    --brass:#c9a961;
+    --brass-bright:#e6c98a;
+    --parchment:#f5ecd9;
+    --parchment-shade:#e6d9b8;
+    --ink:#201c14;
+    --ink-soft:#4a4437;
+    --red:#8b2635;
+    --red-bright:#b23a4c;
+    --shadow-deep: 0 12px 30px rgba(0,0,0,.55);
+    --radius-card: 10px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    font-family:'Inter', sans-serif;
+    color: var(--parchment);
+    background:
+      radial-gradient(ellipse at 50% -10%, #274d3f 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 120%, var(--felt-edge) 0%, transparent 60%),
+      linear-gradient(160deg, var(--felt-1) 0%, var(--felt-2) 100%);
+    min-height:100%;
+    overflow-x:hidden;
+    position:relative;
+  }
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 4px),
+      repeating-linear-gradient(-45deg, rgba(0,0,0,0.02) 0 2px, transparent 2px 4px);
+    pointer-events:none;
+    z-index:0;
+  }
+  body::after{
+    content:"";
+    position:fixed; inset:0;
+    box-shadow: inset 0 0 160px rgba(0,0,0,.65);
+    pointer-events:none;
+    z-index:1;
+  }
+
+  h1,h2,h3,.display{font-family:'Playfair Display', serif;}
+
+  #app{
+    position:relative; z-index:2;
+    max-width:920px;
+    margin:0 auto;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* ============ HEADER ============ */
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 18px 6px;
+    gap:10px;
+  }
+  .brand{ display:flex; align-items:baseline; gap:8px; }
+  .brand .suit-mark{ color: var(--brass-bright); font-size:1.1rem; }
+  h1{
+    font-size:1.3rem;
+    font-weight:700;
+    letter-spacing:.02em;
+    margin:0;
+    color: var(--parchment);
+    text-shadow: 0 2px 8px rgba(0,0,0,.4);
+  }
+  .header-actions{ display:flex; gap:8px; align-items:center; }
+  .icon-btn{
+    background: rgba(255,255,255,.06);
+    border:1px solid rgba(201,169,97,.35);
+    color: var(--parchment);
+    width:38px; height:38px;
+    border-radius:10px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    font-size:1rem;
+    transition: background .15s, transform .15s, border-color .15s;
+  }
+  .icon-btn:hover{ background: rgba(255,255,255,.12); border-color: var(--brass); }
+  .icon-btn:active{ transform: scale(.92); }
+
+  .conn-dot{
+    width:9px; height:9px; border-radius:50%;
+    background: #6b6b6b;
+    box-shadow: 0 0 6px rgba(0,0,0,.4);
+    flex-shrink:0;
+    transition: background .3s;
+  }
+  .conn-dot.live{ background:#4caf6d; box-shadow: 0 0 8px rgba(76,175,109,.7); }
+  .conn-dot.gone{ background:#b23a4c; box-shadow: 0 0 8px rgba(178,58,76,.7); }
+  .conn-label{ font-size:.72rem; color: rgba(245,236,217,.55); white-space:nowrap; }
+
+  /* ============ STATUS BAR ============ */
+  .status-bar{
+    margin: 2px 18px 10px;
+    padding:10px 16px;
+    background: rgba(0,0,0,.22);
+    border:1px solid rgba(201,169,97,.25);
+    border-radius:12px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    font-size:.92rem;
+    min-height:20px;
+    flex-wrap:wrap;
+  }
+  #statusText{ font-weight:500; color: var(--brass-bright); }
+  .trump-chip{
+    display:flex; align-items:center; gap:6px;
+    font-size:.85rem;
+    color: rgba(245,236,217,.75);
+    white-space:nowrap;
+  }
+  .trump-chip .mini-card{
+    font-family:'Playfair Display', serif;
+    font-weight:700;
+    background: var(--parchment);
+    color: var(--ink);
+    border-radius:4px;
+    padding:1px 6px;
+    font-size:.85rem;
+  }
+  .trump-chip .mini-card.red{ color: var(--red); }
+
+  /* ============ LOBBY ============ */
+  .lobby-wrap{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    padding: 20px 20px 60px;
+    gap:22px;
+    text-align:center;
+  }
+  .lobby-card{
+    background: rgba(0,0,0,.24);
+    border:1px solid rgba(201,169,97,.3);
+    border-radius:18px;
+    padding:28px 26px;
+    max-width:420px;
+    width:100%;
+    box-shadow: var(--shadow-deep);
+  }
+  .lobby-card h2{
+    margin:0 0 6px;
+    font-size:1.35rem;
+  }
+  .lobby-card p.sub{
+    margin:0 0 20px;
+    font-size:.88rem;
+    color: rgba(245,236,217,.65);
+    line-height:1.5;
+  }
+  .lobby-divider{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin:22px 0;
+    color: rgba(245,236,217,.4);
+    font-size:.78rem;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+  }
+  .lobby-divider::before, .lobby-divider::after{
+    content:"";
+    flex:1;
+    height:1px;
+    background: rgba(201,169,97,.25);
+  }
+  .field-label{
+    display:block;
+    text-align:left;
+    font-size:.78rem;
+    color: rgba(245,236,217,.6);
+    margin-bottom:6px;
+    letter-spacing:.03em;
+  }
+  input.code-input{
+    width:100%;
+    font-family:'Playfair Display', serif;
+    font-size:1.5rem;
+    font-weight:700;
+    letter-spacing:.18em;
+    text-align:center;
+    text-transform:uppercase;
+    padding:14px 10px;
+    border-radius:12px;
+    border:1px solid rgba(201,169,97,.4);
+    background: rgba(245,236,217,.06);
+    color: var(--brass-bright);
+    margin-bottom:14px;
+  }
+  input.code-input::placeholder{
+    color: rgba(245,236,217,.25);
+    letter-spacing:.1em;
+  }
+  input.code-input:focus{
+    outline:none;
+    border-color: var(--brass);
+    background: rgba(245,236,217,.1);
+  }
+  input.name-input{
+    width:100%;
+    font-family:'Inter', sans-serif;
+    font-size:1rem;
+    padding:12px 14px;
+    border-radius:10px;
+    border:1px solid rgba(201,169,97,.35);
+    background: rgba(245,236,217,.06);
+    color: var(--parchment);
+    margin-bottom:14px;
+  }
+  input.name-input:focus{
+    outline:none;
+    border-color: var(--brass);
+  }
+  .btn{
+    font-family:'Inter', sans-serif;
+    font-weight:700;
+    font-size:.95rem;
+    padding:13px 26px;
+    border-radius:12px;
+    border:none;
+    cursor:pointer;
+    letter-spacing:.02em;
+    transition: transform .12s, box-shadow .12s, opacity .15s;
+    box-shadow: 0 4px 12px rgba(0,0,0,.3);
+    width:100%;
+  }
+  .btn:active{ transform: scale(.97); }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; transform:none; }
+  .btn-primary{
+    background: linear-gradient(160deg, var(--brass-bright), var(--brass));
+    color: #201c14;
+  }
+  .btn-primary:not(:disabled):hover{ filter:brightness(1.06); }
+  .btn-secondary{
+    background: rgba(255,255,255,.08);
+    color: var(--parchment);
+    border:1px solid rgba(201,169,97,.4);
+  }
+  .btn-secondary:not(:disabled):hover{ background: rgba(255,255,255,.14); }
+
+  .room-share{
+    background: rgba(201,169,97,.1);
+    border:1px dashed rgba(201,169,97,.5);
+    border-radius:12px;
+    padding:16px;
+    margin-top:16px;
+  }
+  .room-share .code-display{
+    font-family:'Playfair Display', serif;
+    font-size:2rem;
+    font-weight:900;
+    letter-spacing:.2em;
+    color: var(--brass-bright);
+    margin-bottom:8px;
+  }
+  .room-share .hint{
+    font-size:.8rem;
+    color: rgba(245,236,217,.6);
+    margin-bottom:12px;
+  }
+  .copy-row{ display:flex; gap:8px; }
+  .copy-row .btn{ padding:10px 16px; font-size:.85rem; }
+
+  .seat-list{
+    margin-top:18px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    text-align:left;
+  }
+  .seat-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px 14px;
+    background: rgba(0,0,0,.2);
+    border:1px solid rgba(201,169,97,.2);
+    border-radius:10px;
+    font-size:.9rem;
+  }
+  .seat-row.empty{
+    color: rgba(245,236,217,.35);
+    border-style:dashed;
+    font-style:italic;
+  }
+  .seat-row .seat-name{ display:flex; align-items:center; gap:8px; }
+  .seat-row .host-tag{
+    font-size:.68rem;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+    color: var(--brass-bright);
+    background: rgba(201,169,97,.15);
+    padding:2px 7px;
+    border-radius:6px;
+  }
+  .seat-row .you-tag{
+    font-size:.68rem;
+    color: rgba(245,236,217,.5);
+  }
+
+  .waiting-pulse{
+    display:inline-block;
+    width:8px; height:8px;
+    border-radius:50%;
+    background: var(--brass-bright);
+    animation: waitPulse 1.4s ease-in-out infinite;
+    margin-right:6px;
+  }
+  @keyframes waitPulse{
+    0%,100%{ opacity:.3; transform:scale(.8); }
+    50%{ opacity:1; transform:scale(1.1); }
+  }
+
+  .error-banner{
+    background: rgba(178,58,76,.18);
+    border:1px solid rgba(178,58,76,.5);
+    color: #f0c4cb;
+    padding:10px 14px;
+    border-radius:10px;
+    font-size:.85rem;
+    margin-bottom:14px;
+    text-align:left;
+  }
+
+  /* ============ TABLE ============ */
+  .table-wrap{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    padding: 4px 12px 8px;
+    gap:6px;
+  }
+  .opponents-strip{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:flex-start;
+    justify-content:center;
+    gap:10px 18px;
+    min-height:110px;
+    padding: 6px 8px 2px;
+  }
+  .opponent-pod{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:4px;
+    padding:8px 10px 6px;
+    border-radius:12px;
+    background: rgba(0,0,0,.16);
+    border:1px solid rgba(201,169,97,.18);
+    min-width:84px;
+    transition: border-color .2s, background .2s;
+  }
+  .opponent-pod.eliminated{ opacity:.35; }
+  .opponent-pod .pod-name{
+    font-size:.72rem;
+    letter-spacing:.03em;
+    text-transform:uppercase;
+    color: rgba(245,236,217,.6);
+    display:flex;
+    align-items:center;
+    gap:5px;
+    white-space:nowrap;
+    max-width:120px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .opponent-pod.is-attacker{ border-color: rgba(201,169,97,.55); background: rgba(201,169,97,.08); }
+  .opponent-pod.is-attacker .pod-name{ color: var(--brass-bright); }
+  .opponent-pod.is-defender{ border-color: rgba(178,58,76,.5); background: rgba(178,58,76,.08); }
+  .opponent-pod.is-defender .pod-name{ color: var(--red-bright); }
+  .role-badge{
+    font-size:.62rem;
+    padding:1px 5px;
+    border-radius:5px;
+    background: rgba(201,169,97,.25);
+    color: var(--brass-bright);
+  }
+  .role-badge.defend{ background: rgba(178,58,76,.25); color: var(--red-bright); }
+  .pod-fan{ display:flex; justify-content:center; min-height:64px; align-items:center; }
+  .pod-fan .card-back{ margin-left:-26px; width:40px; height:58px; }
+  .pod-fan .card-back:first-child{ margin-left:0; }
+  .pod-count{ font-size:.7rem; color: rgba(245,236,217,.5); }
+
+  .card-back{
+    width:56px; height:80px;
+    border-radius:8px;
+    background: repeating-linear-gradient(135deg, #7a2333 0 6px, #8b2a3d 6px 12px);
+    border:2px solid var(--brass);
+    box-shadow: 0 4px 10px rgba(0,0,0,.4);
+    position:relative;
+    flex-shrink:0;
+  }
+  .card-back::after{
+    content:"❧";
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    color: rgba(230,201,138,.55);
+    font-size:1.3rem;
+  }
+
+  .mid-zone{
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:26px;
+    min-height:200px;
+    position:relative;
+    flex-wrap:wrap;
+  }
+  .deck-cluster{ display:flex; align-items:flex-end; gap:-14px; position:relative; min-width:100px; }
+  .trump-under{
+    width:64px; height:92px;
+    border-radius:9px;
+    background: var(--parchment);
+    border:2px solid var(--brass);
+    box-shadow: 0 4px 10px rgba(0,0,0,.35);
+    transform: rotate(90deg) translate(2px, 30px);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Playfair Display',serif;
+    font-weight:700;
+    font-size:1.3rem;
+  }
+  .trump-under.red{ color: var(--red); }
+  .trump-under.black{ color: var(--ink); }
+  .deck-pile{
+    width:64px; height:92px;
+    border-radius:9px;
+    background: repeating-linear-gradient(135deg, #7a2333 0 6px, #8b2a3d 6px 12px);
+    border:2px solid var(--brass);
+    box-shadow: 0 6px 16px rgba(0,0,0,.45);
+    margin-left:-26px;
+    position:relative;
+  }
+  .deck-pile::after{
+    content:"❧";
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    color: rgba(230,201,138,.55);
+    font-size:1.4rem;
+  }
+  .deck-count{
+    position:absolute; bottom:-22px; left:50%;
+    transform:translateX(-50%);
+    font-size:.72rem;
+    color: rgba(245,236,217,.65);
+    white-space:nowrap;
+  }
+  .battlefield{
+    display:flex; flex-wrap:wrap; gap:14px;
+    justify-content:center; align-items:center;
+    min-height:130px;
+    padding: 6px 10px;
+  }
+  .pair-slot{ position:relative; width:70px; height:100px; }
+  .pair-slot .card.attack-card{ position:absolute; top:0; left:0; z-index:1; }
+  .pair-slot .card.defend-card{ position:absolute; top:14px; left:16px; z-index:2; }
+  .discard-pile{
+    width:64px; height:92px;
+    border-radius:9px;
+    border:2px dashed rgba(201,169,97,.3);
+    display:flex; align-items:center; justify-content:center;
+    color: rgba(245,236,217,.3);
+    font-size:.7rem;
+    text-align:center;
+    flex-shrink:0;
+    white-space:pre-line;
+  }
+
+  /* ============ CARD ============ */
+  .card{
+    width:66px; height:94px;
+    background: linear-gradient(160deg, var(--parchment) 0%, var(--parchment-shade) 100%);
+    border-radius: var(--radius-card);
+    border:1px solid rgba(0,0,0,.15);
+    box-shadow: 0 3px 8px rgba(0,0,0,.35);
+    display:flex; flex-direction:column; justify-content:space-between;
+    padding:5px 6px;
+    font-family:'Playfair Display', serif;
+    font-weight:700;
+    user-select:none;
+    position:relative;
+    transition: transform .18s cubic-bezier(.2,.8,.3,1.2), box-shadow .18s, margin .18s;
+    flex-shrink:0;
+  }
+  .card .corner{ font-size:.95rem; line-height:1; }
+  .card .corner.bottom{ align-self:flex-end; transform:rotate(180deg); }
+  .card .pip{
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    font-size:1.6rem;
+  }
+  .card.red, .card.red .pip{ color: var(--red); }
+  .card.black, .card.black .pip{ color: var(--ink); }
+  .card.trump-suit{
+    box-shadow: 0 3px 8px rgba(0,0,0,.35), 0 0 0 2px var(--brass), 0 0 14px rgba(201,169,97,.35);
+  }
+
+  /* ============ ANIMATIONS ============ */
+  @keyframes dealIn{
+    0%{ transform: translate(var(--dx,0), var(--dy,-40px)) rotate(var(--drot,-8deg)) scale(.7); opacity:0; }
+    60%{ opacity:1; }
+    100%{ transform: translate(0,0) rotate(0deg) scale(1); opacity:1; }
+  }
+  .card.deal-in, .card-back.deal-in{ animation: dealIn .45s cubic-bezier(.2,.7,.3,1.15) both; }
+
+  @keyframes dropToTable{
+    0%{ transform: translateY(-70px) scale(.85) rotate(-6deg); opacity:0; }
+    70%{ opacity:1; }
+    100%{ transform: translateY(0) scale(1) rotate(0deg); opacity:1; }
+  }
+  .pair-slot .attack-card.just-played{ animation: dropToTable .38s cubic-bezier(.25,.6,.3,1.3) both; }
+
+  @keyframes defendCover{
+    0%{ transform: translate(-18px,-40px) scale(.85) rotate(-10deg); opacity:0; }
+    70%{ opacity:1; }
+    100%{ transform: translate(0,0) scale(1) rotate(0deg); opacity:1; }
+  }
+  .pair-slot .defend-card.just-played{ animation: defendCover .34s cubic-bezier(.25,.6,.3,1.3) both; }
+
+  @keyframes sweepToDiscard{
+    0%{ transform: translate(0,0) rotate(0) scale(1); opacity:1; }
+    100%{ transform: translate(var(--sx,120px), var(--sy,-30px)) rotate(18deg) scale(.55); opacity:0; }
+  }
+  .battlefield.sweeping .pair-slot{ animation: sweepToDiscard .45s cubic-bezier(.4,.1,.7,.4) both; }
+
+  @keyframes sweepToHand{
+    0%{ transform: translate(0,0) rotate(0) scale(1); opacity:1; }
+    100%{ transform: translate(var(--sx,-40px), var(--sy,220px)) rotate(-14deg) scale(.6); opacity:0; }
+  }
+  .battlefield.taking .pair-slot{ animation: sweepToHand .45s cubic-bezier(.4,.1,.7,.4) both; }
+
+  @keyframes thinkPulse{
+    0%,100%{ opacity:1; }
+    50%{ opacity:.55; }
+  }
+  .opponent-pod.thinking .pod-fan{ animation: thinkPulse 1.1s ease-in-out infinite; }
+
+  /* player hand */
+  .hand-row{
+    display:flex; justify-content:center; align-items:flex-end;
+    min-height:118px;
+    padding: 10px 0 4px;
+    position:relative;
+  }
+  .hand-row .card{ margin-left:-24px; cursor:pointer; }
+  .hand-row .card:first-child{ margin-left:0; }
+  .hand-row .card:hover{
+    transform: translateY(-16px) scale(1.04);
+    box-shadow: var(--shadow-deep);
+    z-index:5;
+  }
+  .hand-row .card.selected{
+    transform: translateY(-22px);
+    box-shadow: 0 0 0 3px var(--brass-bright), var(--shadow-deep);
+    z-index:6;
+  }
+  .hand-row .card.disabled{ filter: grayscale(.4) brightness(.75); cursor:not-allowed; }
+  .hand-row .card.disabled:hover{ transform:none; box-shadow:0 3px 8px rgba(0,0,0,.35); }
+
+  .player-label{
+    text-align:center;
+    font-size:.75rem;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color: rgba(245,236,217,.55);
+    margin: 2px 0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+  }
+  .player-label.you{ color: var(--brass-bright); }
+
+  .action-bar{ display:flex; justify-content:center; gap:12px; padding: 8px 16px 18px; }
+  .action-bar .btn{ width:auto; padding:12px 26px; }
+
+  #toast{
+    position:fixed; left:50%; top:14px;
+    transform: translateX(-50%) translateY(-140%);
+    background: rgba(15,36,28,.95);
+    border:1px solid var(--brass);
+    color: var(--parchment);
+    padding:10px 20px;
+    border-radius:10px;
+    font-size:.9rem;
+    z-index:50;
+    box-shadow: var(--shadow-deep);
+    transition: transform .3s ease;
+    pointer-events:none;
+    max-width:90vw;
+    text-align:center;
+  }
+  #toast.show{ transform: translateX(-50%) translateY(0); }
+
+  .modal-overlay{
+    position:fixed; inset:0;
+    background: rgba(5,12,9,.72);
+    backdrop-filter: blur(3px);
+    display:flex; align-items:center; justify-content:center;
+    z-index:100;
+    padding:20px;
+    opacity:0;
+    pointer-events:none;
+    transition: opacity .2s;
+  }
+  .modal-overlay.open{ opacity:1; pointer-events:auto; }
+  .modal{
+    background: linear-gradient(160deg, #24493a, #142c22);
+    border:1px solid var(--brass);
+    border-radius:18px;
+    padding:30px 28px;
+    max-width:420px;
+    width:100%;
+    text-align:center;
+    box-shadow: var(--shadow-deep);
+    transform: scale(.94) translateY(10px);
+    transition: transform .25s cubic-bezier(.2,.8,.3,1.2);
+  }
+  .modal-overlay.open .modal{ transform: scale(1) translateY(0); }
+  .modal .suit-decor{ font-size:2.4rem; margin-bottom:6px; color: var(--brass-bright); }
+  .modal h2{ margin:0 0 8px; font-size:1.6rem; }
+  .modal p{ color: rgba(245,236,217,.8); font-size:.95rem; margin:0 0 22px; line-height:1.5; }
+  .modal .btn{ width:100%; }
+
+  .rules-body{
+    text-align:left;
+    max-height:60vh;
+    overflow-y:auto;
+    font-size:.9rem;
+    line-height:1.6;
+    color: rgba(245,236,217,.85);
+    margin-bottom:20px;
+    padding-right:6px;
+  }
+  .rules-body h3{ color: var(--brass-bright); font-size:1rem; margin:14px 0 6px; }
+  .rules-body h3:first-child{ margin-top:0; }
+  .rules-body::-webkit-scrollbar{ width:6px; }
+  .rules-body::-webkit-scrollbar-thumb{ background: rgba(201,169,97,.4); border-radius:4px; }
+
+  footer{
+    text-align:center;
+    padding:10px 12px 20px;
+    font-size:.72rem;
+    color: rgba(245,236,217,.35);
+  }
+  footer a{ color: rgba(201,169,97,.6); }
+
+  @media (max-width: 480px){
+    .card{ width:52px; height:76px; }
+    .card .corner{ font-size:.75rem; }
+    .card .pip{ font-size:1.2rem; }
+    .hand-row .card{ margin-left:-22px; }
+    .card-back{ width:44px; height:64px; }
+    .pod-fan .card-back{ width:32px; height:46px; margin-left:-20px; }
+    .opponent-pod{ min-width:70px; padding:6px 8px 5px; }
+    .deck-pile, .trump-under{ width:50px; height:74px; }
+    h1{ font-size:1rem; }
+    .btn{ padding:11px 18px; font-size:.88rem; }
+    .status-bar{ font-size:.82rem; padding:8px 12px; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{ transition:none !important; animation:none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <span class="suit-mark">♣</span>
+      <h1>Дурак Online</h1>
+      <span class="suit-mark">♦</span>
+    </div>
+    <div class="header-actions">
+      <span class="conn-dot" id="connDot" title="Статус соединения"></span>
+      <span class="conn-label" id="connLabel"></span>
+      <button class="icon-btn" id="rulesBtn" title="Правила" aria-label="Правила">?</button>
+      <button class="icon-btn" id="leaveBtn" title="Выйти из комнаты" aria-label="Выйти" style="display:none;">✕</button>
+    </div>
+  </header>
+
+  <!-- ============ LOBBY SCREEN ============ -->
+  <div class="lobby-wrap" id="lobbyScreen">
+    <div class="lobby-card">
+      <h2>Играть с друзьями</h2>
+      <p class="sub">Создайте комнату на 2-6 игроков и отправьте код, либо введите код, который вам прислали.</p>
+
+      <div id="lobbyError"></div>
+
+      <label class="field-label" for="nameInput">Ваше имя</label>
+      <input class="name-input" id="nameInput" placeholder="Например, Саша" maxlength="20">
+
+      <label class="field-label" for="maxPlayersSelect">Сколько игроков в комнате</label>
+      <select class="name-input" id="maxPlayersSelect" style="margin-bottom:14px;">
+        <option value="2">2 игрока</option>
+        <option value="3">3 игрока</option>
+        <option value="4" selected>4 игрока</option>
+        <option value="5">5 игроков</option>
+        <option value="6">6 игроков</option>
+      </select>
+
+      <button class="btn btn-primary" id="createBtn">Создать комнату</button>
+
+      <div class="lobby-divider">или</div>
+
+      <label class="field-label" for="joinCodeInput">Код комнаты от друга</label>
+      <input class="code-input" id="joinCodeInput" placeholder="AB3XQ9" maxlength="8" autocomplete="off" autocapitalize="characters">
+      <button class="btn btn-secondary" id="joinBtn">Присоединиться</button>
+    </div>
+  </div>
+
+  <!-- ============ WAITING / PRE-GAME LOBBY SCREEN ============ -->
+  <div class="lobby-wrap" id="waitingScreen" style="display:none;">
+    <div class="lobby-card">
+      <h2><span class="waiting-pulse"></span>Комната собирается…</h2>
+      <p class="sub">Отправьте этот код друзьям — как только все будут готовы, хост нажмёт «Начать игру».</p>
+      <div class="room-share">
+        <div class="code-display" id="roomCodeDisplay">------</div>
+        <div class="hint">Код комнаты</div>
+        <div class="copy-row">
+          <button class="btn btn-secondary" id="copyCodeBtn">Скопировать код</button>
+          <button class="btn btn-secondary" id="copyLinkBtn">Скопировать ссылку</button>
+        </div>
+      </div>
+
+      <div class="seat-list" id="seatList"></div>
+
+      <button class="btn btn-primary" id="startGameBtn" style="margin-top:16px; display:none;">Начать игру</button>
+      <p class="sub" id="waitingHostHint" style="margin:12px 0 0;"></p>
+    </div>
+  </div>
+
+  <!-- ============ GAME SCREEN ============ -->
+  <div id="gameScreen" style="display:none; flex:1; flex-direction:column;">
+    <div class="status-bar">
+      <span id="statusText">Загрузка…</span>
+      <span class="trump-chip" id="trumpChip"></span>
+    </div>
+
+    <div class="table-wrap">
+      <div class="opponents-strip" id="opponentsStrip"></div>
+
+      <div class="mid-zone">
+        <div class="deck-cluster">
+          <div class="trump-under" id="trumpUnderCard"></div>
+          <div class="deck-pile" id="deckPile" style="display:none;">
+            <div class="deck-count" id="deckCount"></div>
+          </div>
+        </div>
+
+        <div class="battlefield" id="battlefield"></div>
+
+        <div class="discard-pile" id="discardPile">бито</div>
+      </div>
+
+      <div class="player-label you" id="youLabel">Вы</div>
+      <div class="hand-row" id="playerHand"></div>
+
+      <div class="action-bar">
+        <button class="btn btn-secondary" id="takeBtn">Взять</button>
+        <button class="btn btn-secondary" id="passBtn">Пас</button>
+        <button class="btn btn-primary" id="doneBtn">Бито</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Дурак Online · подкидной, 36 карт, 2-6 игроков · <a href="#" id="rulesLink2">правила</a> · <a href="index.html">играть с компьютером</a>
+  </footer>
+</div>
+
+<div id="toast"></div>
+
+<div class="modal-overlay" id="endModal">
+  <div class="modal">
+    <div class="suit-decor" id="endIcon">♠</div>
+    <h2 id="endTitle">Игра окончена</h2>
+    <p id="endText"></p>
+    <button class="btn btn-primary" id="playAgainBtn">Новая игра</button>
+    <button class="btn btn-secondary" id="backToLobbyBtn" style="margin-top:10px;">В лобби</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="rulesModal">
+  <div class="modal" style="max-width:520px;">
+    <h2 style="margin-bottom:14px;">Правила игры</h2>
+    <div class="rules-body">
+      <h3>Цель игры</h3>
+      <p>Избавиться от всех карт первым. Игрок, оставшийся с картами на руках, когда колода и карты соперника закончились — «дурак».</p>
+      <h3>Колода и раздача</h3>
+      <p>36 карт (от шестёрки до туза). Каждому игроку раздаётся по 6 карт. Следующая карта открывается и кладётся под низ колоды — она определяет козырь. Ход первым получает игрок с младшим козырем.</p>
+      <h3>Атака и защита</h3>
+      <p>Атакующий кладёт на стол одну или несколько карт одного достоинства. Защищающийся должен побить каждую карту: той же масти старше, либо любым козырем.</p>
+      <h3>Подкидывание (для 3+ игроков)</h3>
+      <p>Как только защищающийся отбил текущую карту (или до первой карты), остальные игроки по очереди могут подкинуть карту того же достоинства, что уже на столе. Игрок, которому нечего подкинуть или кто не хочет — жмёт «Пас». Как только все, кроме защищающегося, пасанули, карты уходят в отбой.</p>
+      <h3>Если не отбился</h3>
+      <p>Защищающийся забирает все карты со стола себе в руку. Атака переходит к игроку после защищавшегося (по кругу).</p>
+      <h3>Если отбился</h3>
+      <p>Все карты со стола уходят в отбой. Право атаки переходит к тому, кто только что защищался.</p>
+      <h3>Добор карт</h3>
+      <p>После завершения розыгрыша игроки по очереди добирают карты из колоды до 6 штук, начиная с атаковавшего, по кругу.</p>
+      <h3>Выбывание и конец игры</h3>
+      <p>Как только у игрока заканчиваются карты и в колоде больше нечего брать, он выходит из игры. Игра продолжается, пока не останется один игрок с картами — он и «дурак». Если у всех закончились карты одновременно — ничья.</p>
+      <h3>Игра с друзьями</h3>
+      <p>Один из вас создаёт комнату, выбирает число игроков (2-6) и отправляет код остальным. Когда все присоединились, хост (создатель комнаты) нажимает «Начать игру». Партия сохраняется онлайн — можно закрыть вкладку и вернуться по тому же коду.</p>
+    </div>
+    <button class="btn btn-primary" id="closeRulesBtn">Понятно</button>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="engine.js"></script>
+<script src="multiplayer.js"></script>
+</body>
+</html>
