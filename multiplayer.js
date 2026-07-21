@@ -654,6 +654,24 @@
       els.joinCodeInput.value = els.joinCodeInput.value.toUpperCase();
     });
 
+    // Player-count chip picker: clicking a chip updates its own selected
+    // state and mirrors the value into the hidden <select> that the rest
+    // of the app (createRoom) reads from.
+    const countPicker = document.getElementById('playerCountPicker');
+    if(countPicker){
+      countPicker.querySelectorAll('.count-chip').forEach(chip=>{
+        chip.addEventListener('click', ()=>{
+          countPicker.querySelectorAll('.count-chip').forEach(c=>{
+            c.classList.remove('is-selected');
+            c.setAttribute('aria-checked','false');
+          });
+          chip.classList.add('is-selected');
+          chip.setAttribute('aria-checked','true');
+          els.maxPlayersSelect.value = chip.getAttribute('data-value');
+        });
+      });
+    }
+
     els.nameInput.addEventListener('input', ()=>{
       saveMyName(els.nameInput.value.slice(0,20));
     });
