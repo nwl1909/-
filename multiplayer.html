@@ -237,6 +237,44 @@
     outline:none;
     border-color: var(--brass);
   }
+
+  .player-count-picker{
+    display:flex;
+    gap:8px;
+    margin-bottom:16px;
+  }
+  .count-chip{
+    flex:1;
+    aspect-ratio:1;
+    font-family:'Playfair Display', serif;
+    font-weight:700;
+    font-size:1.15rem;
+    background: rgba(245,236,217,.06);
+    border:1px solid rgba(201,169,97,.35);
+    color: rgba(245,236,217,.75);
+    border-radius:50%;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    transition: background .15s, border-color .15s, transform .12s, color .15s, box-shadow .15s;
+  }
+  .count-chip:hover{
+    border-color: var(--brass);
+    background: rgba(245,236,217,.1);
+  }
+  .count-chip:active{ transform: scale(.92); }
+  .count-chip.is-selected{
+    background: linear-gradient(160deg, var(--brass-bright), var(--brass));
+    border-color: var(--brass-bright);
+    color: #201c14;
+    box-shadow: 0 3px 10px rgba(0,0,0,.3), 0 0 0 2px rgba(201,169,97,.25);
+  }
+  .count-chip:focus-visible{
+    outline: 2px solid var(--brass-bright);
+    outline-offset: 2px;
+  }
+
   .btn{
     font-family:'Inter', sans-serif;
     font-weight:700;
@@ -720,7 +758,14 @@
       <input class="name-input" id="nameInput" placeholder="Например, Саша" maxlength="20">
 
       <label class="field-label" for="maxPlayersSelect">Сколько игроков в комнате</label>
-      <select class="name-input" id="maxPlayersSelect" style="margin-bottom:14px;">
+      <div class="player-count-picker" id="playerCountPicker" role="radiogroup" aria-label="Число игроков">
+        <button type="button" class="count-chip" data-value="2" role="radio" aria-checked="false">2</button>
+        <button type="button" class="count-chip" data-value="3" role="radio" aria-checked="false">3</button>
+        <button type="button" class="count-chip is-selected" data-value="4" role="radio" aria-checked="true">4</button>
+        <button type="button" class="count-chip" data-value="5" role="radio" aria-checked="false">5</button>
+        <button type="button" class="count-chip" data-value="6" role="radio" aria-checked="false">6</button>
+      </div>
+      <select id="maxPlayersSelect" style="display:none;">
         <option value="2">2 игрока</option>
         <option value="3">3 игрока</option>
         <option value="4" selected>4 игрока</option>
